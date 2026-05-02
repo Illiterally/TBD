@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GBA Style - Terrestrial Prototype</title>
+  <style>
+    body {
+      background-color: #121212;
+      color: #888;
+      font-family: 'Courier New', Courier, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    canvas {
+      width: 720px;
+      height: 480px;
+      image-rendering: pixelated;
+      border: 8px solid #333;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+    }
+
+    .ui-hint {
+      margin-top: 15px;
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="screen" width="240" height="160"></canvas>
+<div class="ui-hint">ARROWS TO NAVIGATE // 16px TILE STEP</div>
+
+<script>
+  const canvas = document.getElementById('screen');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  const PALETTE = {
+    grass: '#4d6e37',
+    grass_alt: '#567a3e',
+    path: '#c4a470',
+    stone: '#736d66',
+    stone_dark: '#4a4641'
+  };
+
+  const TILE = 16;
+  const WALK_DURATION = 180;
+  const SCREEN_W = 240;
+  const SCREEN_H = 160;
+  const MAP_SIZE = 20;
+
+  const worldMap = Array.from({ length: MAP_SIZE * MAP_SIZE }, (_, i) => {
+    if (
+      i < MAP_SIZE ||
+      i % MAP_SIZE === 0 ||
+      i % MAP_SIZE === MAP_SIZE - 1 ||
+      i > (MAP_SIZE * MAP_SIZE) - MAP_SIZE
+    ) return 2;
+    if (Math.random() > 0.85) return 2;
+    return Math.random() > 0.3 ? 0 : 1;
+  });
+
+  const player = {
+    gx: 5,
+    gy: 5,
+    isMoving: false,
+    moveProg: 0,
+    dir: { x: 0, y: 0 },
+    facing: 'down'
+  };
+
+  const keys = {};
+  window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
+      e.preventDefault();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+  });
+
+  // --- SPRITE SHEET ---
+  const spriteSheet = new Image();
+  spriteSheet.src = 'GK.png';
+
+  let frameW = 0;
+  let frameH = 0;
+  const SHEET_COLS = 4;
+  const SHEET_ROWS = 2;
+
+  // Row-major frame indexing:
+  // 0 down idle
+  // 1 down walk
+  // 2 left idle
+  // 3 left walk
+  // 4 right idle
+  // 5 right walk
+  // 6 up idle
+  // 7 up walk
+  const FRAME_MAP = {
+    down: [0, 1],
+    left: [2, 3],
+    right: [4, 5],
+    up: [6, 7]
+  };
+
+  spriteSheet.onload = () => {
+    frameW = Math.floor(spriteSheet.width / SHEET_COLS);
+    frameH = Math.floor(spriteSheet.height / SHEET_ROWS);
+    requestAnimationFrame(loop);
+  };
+
+  function drawPlayerSprite(px, py, facing, walkFrame) {
+    if (!frameW || !frameH) return;
+
+    const frameIndex = FRAME_MAP[facing][walkFrame];
+    const sx = (frameIndex % SHEET_COLS) * frameW;
+    const sy = Math.floor(frameIndex / SHEET_COLS) * frameH;
+
+    // Fit big source frame into a 16x16-ish world footprint
+    const targetW = 24;
+    const targetH = 32;
+    const drawX = Math.floor(px - targetW / 2 + TILE / 2);
+    const drawY = Math.floor(py - targetH + TILE + 2);
+
+    ctx.drawImage(
+      spriteSheet,
+      sx, sy, frameW, frameH,
+      drawX, drawY, targetW, targetH
+    );
+  }
+
+  function update(dt) {
+    if (!player.isMoving) {
+      let dx = 0, dy = 0;
+
+      if (keys['ArrowUp']) {
+        dy = -1;
+        player.facing = 'up';
+      } else if (keys['ArrowDown']) {
+        dy = 1;
+        player.facing = 'down';
+      } else if (keys['ArrowLeft']) {
+        dx = -1;
+        player.facing = 'left';
+      } else if (keys['ArrowRight']) {
+        dx = 1;
+        player.facing = 'right';
+      }
+
+      if (dx !== 0 || dy !== 0) {
+        const tx = player.gx + dx;
+        const ty = player.gy + dy;
+
+        if (worldMap[ty * MAP_SIZE + tx] !== 2) {
+          player.isMoving = true;
+          player.dir = { x: dx, y: dy };
+          player.moveProg = 0;
+        }
+      }
+    } else {
+      player.moveProg += dt;
+      if (player.moveProg >= WALK_DURATION) {
+        player.gx += player.dir.x;
+        player.gy += player.dir.y;
+        player.isMoving = false;
+        player.moveProg = 0;
+      }
+    }
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, SCREEN_W, SCREEN_H);
+
+    const lerp = player.isMoving ? (player.moveProg / WALK_DURATION) : 0;
+    const camX = ((player.gx + (player.dir.x * lerp)) * TILE) - (SCREEN_W / 2) + (TILE / 2);
+    const camY = ((player.gy + (player.dir.y * lerp)) * TILE) - (SCREEN_H / 2) + (TILE / 2);
+
+    for (let y = 0; y < MAP_SIZE; y++) {
+      for (let x = 0; x < MAP_SIZE; x++) {
+        const tx = (x * TILE) - Math.floor(camX);
+        const ty = (y * TILE) - Math.floor(camY);
+
+        if (tx < -TILE || tx > SCREEN_W || ty < -TILE || ty > SCREEN_H) continue;
+
+        const type = worldMap[y * MAP_SIZE + x];
+
+        if (type === 0) ctx.fillStyle = (x + y) % 2 ? PALETTE.grass : PALETTE.grass_alt;
+        else if (type === 1) ctx.fillStyle = PALETTE.path;
+        else ctx.fillStyle = PALETTE.stone;
+
+        ctx.fillRect(tx, ty, TILE, TILE);
+
+        if (type === 2) {
+          ctx.fillStyle = PALETTE.stone_dark;
+          ctx.fillRect(tx, ty, TILE, 2);
+          ctx.fillRect(tx, ty, 2, TILE);
+        }
+      }
+    }
+
+    const pFrame = (player.isMoving && player.moveProg > WALK_DURATION / 2) ? 1 : 0;
+    drawPlayerSprite(
+      (SCREEN_W / 2) - (TILE / 2),
+      (SCREEN_H / 2) - (TILE / 2),
+      player.facing,
+      pFrame
+    );
+  }
+
+  let last = 0;
+  function loop(now) {
+    const dt = now - last;
+    last = now;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+</script>
+
+</body>
+</html>
