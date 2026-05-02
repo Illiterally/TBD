@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GBA Style - Terrestrial Prototype</title>
+  <title>GBA Style - Painted Background Prototype</title>
   <style>
     body {
       background-color: #121212;
@@ -36,41 +36,57 @@
 <body>
 
 <canvas id="screen" width="240" height="160"></canvas>
-<div class="ui-hint">ARROWS TO NAVIGATE // 16px TILE STEP</div>
+<div class="ui-hint">ARROWS TO NAVIGATE // C TO TOGGLE COLLISION</div>
 
 <script>
   const canvas = document.getElementById('screen');
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
-  const PALETTE = {
-    grass: '#4d6e37',
-    grass_alt: '#567a3e',
-    path: '#c4a470',
-    stone: '#736d66',
-    stone_dark: '#4a4641'
-  };
-
   const TILE = 16;
   const WALK_DURATION = 180;
   const SCREEN_W = 240;
   const SCREEN_H = 160;
-  const MAP_SIZE = 20;
+  const MAP_W = 20;
+  const MAP_H = 20;
+  const WORLD_W = MAP_W * TILE;
+  const WORLD_H = MAP_H * TILE;
 
-  const worldMap = Array.from({ length: MAP_SIZE * MAP_SIZE }, (_, i) => {
-    if (
-      i < MAP_SIZE ||
-      i % MAP_SIZE === 0 ||
-      i % MAP_SIZE === MAP_SIZE - 1 ||
-      i > (MAP_SIZE * MAP_SIZE) - MAP_SIZE
-    ) return 2;
-    if (Math.random() > 0.85) return 2;
-    return Math.random() > 0.3 ? 0 : 1;
-  });
+  const bgImage = new Image();
+  bgImage.src = 'BG.png';
+
+  const spriteSheet = new Image();
+  spriteSheet.src = 'GK.png';
+
+  // 0 = walkable
+  // 2 = blocked
+  // Best-fit to current BG.png
+  const collisionMap = [
+    '22222222200222222222',
+    '20000000000000000002',
+    '20000000000000000002',
+    '20000000000000220002',
+    '20222222222200220002',
+    '20222222222200000002',
+    '20002222222202222002',
+    '20002222222202200002',
+    '20002200222200000002',
+    '20000000000000000002',
+    '20000000000000000002',
+    '20220000000000002202',
+    '20220000000000002202',
+    '20000000000000000002',
+    '20000220000002200002',
+    '20000220000002200002',
+    '20000000000000000002',
+    '20000000000000000002',
+    '20000000000000000002',
+    '22222222200222222222'
+  ];
 
   const player = {
-    gx: 5,
-    gy: 5,
+    gx: 9,
+    gy: 11,
     isMoving: false,
     moveProg: 0,
     dir: { x: 0, y: 0 },
@@ -78,26 +94,29 @@
   };
 
   const keys = {};
+  let showCollision = false;
+
   window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
-    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
+
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyC'].includes(e.code)) {
       e.preventDefault();
     }
+
+    if (e.code === 'KeyC') {
+      showCollision = !showCollision;
+    }
   });
+
   window.addEventListener('keyup', (e) => {
     keys[e.code] = false;
   });
-
-  // --- SPRITE SHEET ---
-  const spriteSheet = new Image();
-  spriteSheet.src = 'GK.png';
 
   let frameW = 0;
   let frameH = 0;
   const SHEET_COLS = 4;
   const SHEET_ROWS = 2;
 
-  // Row-major frame indexing:
   // 0 down idle
   // 1 down walk
   // 2 left idle
@@ -113,11 +132,14 @@
     up: [6, 7]
   };
 
-  spriteSheet.onload = () => {
-    frameW = Math.floor(spriteSheet.width / SHEET_COLS);
-    frameH = Math.floor(spriteSheet.height / SHEET_ROWS);
-    requestAnimationFrame(loop);
-  };
+  function tileAt(x, y) {
+    if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 2;
+    return Number(collisionMap[y][x]);
+  }
+
+  function blocked(x, y) {
+    return tileAt(x, y) === 2;
+  }
 
   function drawPlayerSprite(px, py, facing, walkFrame) {
     if (!frameW || !frameH) return;
@@ -126,7 +148,6 @@
     const sx = (frameIndex % SHEET_COLS) * frameW;
     const sy = Math.floor(frameIndex / SHEET_COLS) * frameH;
 
-    // Fit big source frame into a 16x16-ish world footprint
     const targetW = 24;
     const targetH = 32;
     const drawX = Math.floor(px - targetW / 2 + TILE / 2);
@@ -141,7 +162,8 @@
 
   function update(dt) {
     if (!player.isMoving) {
-      let dx = 0, dy = 0;
+      let dx = 0;
+      let dy = 0;
 
       if (keys['ArrowUp']) {
         dy = -1;
@@ -161,7 +183,7 @@
         const tx = player.gx + dx;
         const ty = player.gy + dy;
 
-        if (worldMap[ty * MAP_SIZE + tx] !== 2) {
+        if (!blocked(tx, ty)) {
           player.isMoving = true;
           player.dir = { x: dx, y: dy };
           player.moveProg = 0;
@@ -178,46 +200,90 @@
     }
   }
 
-  function render() {
-    ctx.clearRect(0, 0, SCREEN_W, SCREEN_H);
+  function getCamera() {
+    const lerp = player.isMoving ? Math.min(1, player.moveProg / WALK_DURATION) : 0;
 
-    const lerp = player.isMoving ? (player.moveProg / WALK_DURATION) : 0;
-    const camX = ((player.gx + (player.dir.x * lerp)) * TILE) - (SCREEN_W / 2) + (TILE / 2);
-    const camY = ((player.gy + (player.dir.y * lerp)) * TILE) - (SCREEN_H / 2) + (TILE / 2);
+    const worldPlayerX = (player.gx + player.dir.x * lerp) * TILE + TILE / 2;
+    const worldPlayerY = (player.gy + player.dir.y * lerp) * TILE + TILE / 2;
 
-    for (let y = 0; y < MAP_SIZE; y++) {
-      for (let x = 0; x < MAP_SIZE; x++) {
-        const tx = (x * TILE) - Math.floor(camX);
-        const ty = (y * TILE) - Math.floor(camY);
+    let camX = Math.floor(worldPlayerX - SCREEN_W / 2);
+    let camY = Math.floor(worldPlayerY - SCREEN_H / 2);
 
-        if (tx < -TILE || tx > SCREEN_W || ty < -TILE || ty > SCREEN_H) continue;
+    camX = Math.max(0, Math.min(camX, WORLD_W - SCREEN_W));
+    camY = Math.max(0, Math.min(camY, WORLD_H - SCREEN_H));
 
-        const type = worldMap[y * MAP_SIZE + x];
+    return { camX, camY, lerp };
+  }
 
-        if (type === 0) ctx.fillStyle = (x + y) % 2 ? PALETTE.grass : PALETTE.grass_alt;
-        else if (type === 1) ctx.fillStyle = PALETTE.path;
-        else ctx.fillStyle = PALETTE.stone;
+  function drawBackground(camX, camY) {
+    const srcX = (camX / WORLD_W) * bgImage.width;
+    const srcY = (camY / WORLD_H) * bgImage.height;
+    const srcW = (SCREEN_W / WORLD_W) * bgImage.width;
+    const srcH = (SCREEN_H / WORLD_H) * bgImage.height;
 
-        ctx.fillRect(tx, ty, TILE, TILE);
-
-        if (type === 2) {
-          ctx.fillStyle = PALETTE.stone_dark;
-          ctx.fillRect(tx, ty, TILE, 2);
-          ctx.fillRect(tx, ty, 2, TILE);
-        }
-      }
-    }
-
-    const pFrame = (player.isMoving && player.moveProg > WALK_DURATION / 2) ? 1 : 0;
-    drawPlayerSprite(
-      (SCREEN_W / 2) - (TILE / 2),
-      (SCREEN_H / 2) - (TILE / 2),
-      player.facing,
-      pFrame
+    ctx.drawImage(
+      bgImage,
+      Math.floor(srcX),
+      Math.floor(srcY),
+      Math.ceil(srcW),
+      Math.ceil(srcH),
+      0,
+      0,
+      SCREEN_W,
+      SCREEN_H
     );
   }
 
+  function drawCollisionOverlay(camX, camY) {
+    if (!showCollision) return;
+
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        if (tileAt(x, y) !== 2) continue;
+
+        const sx = x * TILE - camX;
+        const sy = y * TILE - camY;
+
+        if (sx < -TILE || sy < -TILE || sx > SCREEN_W || sy > SCREEN_H) continue;
+
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
+        ctx.fillRect(sx, sy, TILE, TILE);
+      }
+    }
+  }
+
+  function render() {
+    const { camX, camY, lerp } = getCamera();
+
+    ctx.clearRect(0, 0, SCREEN_W, SCREEN_H);
+    drawBackground(camX, camY);
+
+    const playerWorldX = (player.gx + player.dir.x * lerp) * TILE;
+    const playerWorldY = (player.gy + player.dir.y * lerp) * TILE;
+    const playerScreenX = playerWorldX - camX;
+    const playerScreenY = playerWorldY - camY;
+
+    const pFrame = (player.isMoving && player.moveProg > WALK_DURATION / 2) ? 1 : 0;
+    drawPlayerSprite(playerScreenX, playerScreenY, player.facing, pFrame);
+
+    drawCollisionOverlay(camX, camY);
+  }
+
   let last = 0;
+  let loaded = 0;
+
+  function assetLoaded() {
+    loaded++;
+    if (loaded === 2) {
+      frameW = Math.floor(spriteSheet.width / SHEET_COLS);
+      frameH = Math.floor(spriteSheet.height / SHEET_ROWS);
+      requestAnimationFrame(loop);
+    }
+  }
+
+  bgImage.onload = assetLoaded;
+  spriteSheet.onload = assetLoaded;
+
   function loop(now) {
     const dt = now - last;
     last = now;
